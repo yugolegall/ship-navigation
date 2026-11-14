@@ -357,11 +357,28 @@
     if (selected) renderCard();
     updateStatus();
   }
+  // The collector publishes to the "data" branch every minute; GitHub Pages is only used for this page.
+  function dataUrls() {
+    var urls = [];
+    var parts = location.pathname.split("/").filter(Boolean);
+    if (/\.github\.io$/.test(location.hostname) && parts.length) {
+      urls.push("https://raw.githubusercontent.com/" + location.hostname.split(".")[0] + "/" + parts[0] + "/data/snapshot.json");
+    }
+    urls.push("data/snapshot.json");
+    return urls;
+  }
   function load() {
-    fetch("data/snapshot.json?t=" + Date.now(), { cache: "no-store" })
-      .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
-      .then(apply)
-      .catch(function () { if (!generated) setConn("ng", "船のデータを読み込めません。少し待ってから開き直してください"); });
+    var urls = dataUrls(), i = 0;
+    (function next() {
+      fetch(urls[i] + "?t=" + Date.now(), { cache: "no-store" })
+        .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
+        .then(function (d) { if (!generated || d.generated >= generated) apply(d); })
+        .catch(function () {
+          i++;
+          if (i < urls.length) next();
+          else if (!generated) setConn("ng", "船のデータを読み込めません。少し待ってから開き直してください");
+        });
+    })();
   }
 
   /* ---------- regions ---------- */
