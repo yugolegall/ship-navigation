@@ -1,0 +1,524 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>日本の船マップ</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700&family=Space+Grotesk:wght@500;700&display=swap">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+  :root {
+    --glass: rgba(9, 24, 34, 0.84);
+    --glass-solid: #0b1a24;
+    --ink: #e9f2f6;
+    --muted: #9db4c0;
+    --line: rgba(255, 255, 255, 0.13);
+    --accent: #5ad1e6;
+    --warn: #f6ad3c;
+    --bad: #ef5d4a;
+    --good: #3ddc97;
+    --f-display: "Space Grotesk", "Noto Sans JP", system-ui, sans-serif;
+    --f-body: "Noto Sans JP", "Hiragino Sans", "Yu Gothic", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; background: #0b1a24; }
+  body { font: 14px/1.6 var(--f-body); color: var(--ink); overflow: hidden; }
+  #map { position: fixed; inset: 0; background: #aad3df; }
+  .leaflet-container { font-family: var(--f-body); }
+
+  .panel { background: var(--glass); border: 1px solid var(--line); border-radius: 10px; backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); box-shadow: 0 8px 30px rgba(0, 0, 0, 0.28); }
+  h1 { font: 700 20px/1.2 var(--f-display); margin: 0; letter-spacing: 0.02em; }
+  h2 { font: 700 11px/1 var(--f-display); letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); margin: 0 0 10px; }
+  button { font: inherit; color: inherit; cursor: pointer; }
+  button:focus-visible, input:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  #side { position: fixed; z-index: 800; top: 14px; left: 14px; bottom: 14px; width: 310px; display: flex; flex-direction: column; overflow: hidden; }
+  #side .scroll { overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 20px; }
+  .brand { display: flex; flex-direction: column; gap: 6px; }
+  .live { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--warn); flex: none; }
+  .dot.ok { background: var(--good); box-shadow: 0 0 0 0 rgba(61,220,151,.6); animation: pulse 2s infinite; }
+  .dot.ng { background: var(--bad); }
+  @keyframes pulse { 70% { box-shadow: 0 0 0 7px rgba(61,220,151,0); } 100% { box-shadow: 0 0 0 0 rgba(61,220,151,0); } }
+  @media (prefers-reduced-motion: reduce) { .dot.ok { animation: none; } }
+
+  .regions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .region { text-align: left; padding: 7px 10px; border-radius: 6px; border: 1px solid var(--line); background: transparent; font-size: 13px; }
+  .region:hover { background: rgba(255, 255, 255, 0.07); }
+  .region[aria-pressed="true"] { background: var(--accent); color: #062029; border-color: var(--accent); font-weight: 700; }
+
+  .big { display: flex; gap: 18px; margin-bottom: 12px; }
+  .big div { display: flex; flex-direction: column; }
+  .big b { font: 700 26px/1.1 var(--f-display); font-variant-numeric: tabular-nums; }
+  .big span { font-size: 11px; color: var(--muted); }
+  .stat { width: 100%; display: grid; grid-template-columns: 12px 1fr auto; gap: 2px 8px; align-items: center; text-align: left; border: 0; background: transparent; padding: 5px 0; border-radius: 4px; }
+  .stat[aria-pressed="false"] { opacity: 0.4; }
+  .stat .sw { width: 10px; height: 10px; border-radius: 50%; }
+  .stat .num { font-variant-numeric: tabular-nums; font-weight: 700; }
+  .stat .bar { grid-column: 2 / 4; height: 3px; border-radius: 2px; background: rgba(255, 255, 255, 0.1); overflow: hidden; }
+  .stat .bar i { display: block; height: 100%; width: 0; border-radius: 2px; transition: width .4s ease; }
+
+  .toggle { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 0; cursor: pointer; }
+  .toggle input { appearance: none; width: 36px; height: 20px; border-radius: 10px; background: rgba(255, 255, 255, 0.2); position: relative; cursor: pointer; flex: none; transition: background .2s; }
+  .toggle input::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: transform .2s; }
+  .toggle input:checked { background: var(--accent); }
+  .toggle input:checked::after { transform: translateX(16px); }
+  .toggle .k { display: inline-block; width: 18px; height: 4px; border-radius: 2px; margin-right: 8px; vertical-align: middle; }
+  #envmsg { font-size: 11.5px; color: var(--muted); margin: 4px 0 0; }
+
+  .foot { font-size: 11px; color: var(--muted); line-height: 1.6; }
+  .foot p { margin: 0 0 6px; }
+
+  #searchbox { position: fixed; z-index: 800; top: 14px; right: 14px; width: min(340px, calc(100vw - 28px)); }
+  #searchbox input { width: 100%; padding: 11px 14px; border-radius: 10px; border: 1px solid var(--line); background: var(--glass); color: var(--ink); font: inherit; backdrop-filter: blur(10px); }
+  #searchbox input::placeholder { color: var(--muted); }
+  #results { margin-top: 6px; overflow: hidden; }
+  #results button { width: 100%; display: flex; gap: 10px; align-items: center; text-align: left; padding: 9px 14px; background: transparent; border: 0; border-bottom: 1px solid var(--line); }
+  #results button:last-child { border-bottom: 0; }
+  #results button:hover { background: rgba(255, 255, 255, 0.08); }
+  #results .sw { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+  #results .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #results .mm { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+  #results .empty { padding: 10px 14px; color: var(--muted); font-size: 13px; }
+
+  #card { position: fixed; z-index: 800; top: 70px; right: 14px; width: min(340px, calc(100vw - 28px)); padding: 16px; }
+  #card .head { display: flex; justify-content: space-between; gap: 10px; align-items: flex-start; }
+  #card .name { font: 700 18px/1.3 var(--f-display); margin: 0; overflow-wrap: anywhere; }
+  #card .tag { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); margin-top: 2px; }
+  #card .tag i { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+  #card .x { border: 0; background: transparent; font-size: 20px; line-height: 1; padding: 2px 6px; color: var(--muted); }
+  #card dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; margin: 14px 0; }
+  #card dt { color: var(--muted); font-size: 12px; }
+  #card dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+  #card a { display: block; text-align: center; padding: 9px; border-radius: 6px; border: 1px solid var(--accent); color: var(--accent); text-decoration: none; font-weight: 700; font-size: 13px; }
+  #card a:hover { background: var(--accent); color: #062029; }
+
+  #menu { display: none; position: fixed; z-index: 900; left: 14px; top: 14px; padding: 10px 14px; border-radius: 10px; border: 1px solid var(--line); background: var(--glass); backdrop-filter: blur(10px); font-weight: 700; }
+
+  .ship svg { overflow: visible; filter: drop-shadow(0 1px 1.5px rgba(0, 0, 0, 0.45)); }
+  .leaflet-control-zoom a { background: var(--glass-solid) !important; color: var(--ink) !important; border-color: var(--line) !important; }
+
+  @media (max-width: 760px) {
+    #menu { display: block; }
+    #side { top: 64px; bottom: auto; max-height: calc(100vh - 150px); width: calc(100vw - 28px); transform: translateY(-130%); transition: transform .25s ease; }
+    body.open #side { transform: none; }
+    #searchbox { top: 14px; left: 100px; right: 14px; width: auto; }
+    #card { top: auto; bottom: 14px; }
+  }
+</style>
+</head>
+<body>
+<div id="map"></div>
+
+<button id="menu" type="button" aria-label="メニューを開く">メニュー</button>
+
+<aside id="side" class="panel">
+  <div class="scroll">
+    <div class="brand">
+      <h1>日本の船マップ</h1>
+      <div class="live"><span class="dot" id="dot"></span><span id="conn">読み込み中…</span></div>
+    </div>
+
+    <section>
+      <h2>海域</h2>
+      <div class="regions" id="regions"></div>
+    </section>
+
+    <section>
+      <h2>いま見えている船</h2>
+      <div class="big">
+        <div><b id="nTotal">0</b><span>隻</span></div>
+        <div><b id="nMoving">0</b><span>航行中</span></div>
+        <div><b id="nJp">0</b><span>日本籍</span></div>
+      </div>
+      <div id="stats"></div>
+    </section>
+
+    <section>
+      <h2>重ねて表示</h2>
+      <label class="toggle"><span><i class="k" style="background:#2f6fdb"></i>風（吹いていく向き）</span><input type="checkbox" id="tWind" checked></label>
+      <label class="toggle"><span><i class="k" style="background:#12a15f"></i>潮流・海流（流れる向き）</span><input type="checkbox" id="tCur" checked></label>
+      <label class="toggle"><span><i class="k" style="background:#c0408a"></i>海図記号（灯台・ブイ）</span><input type="checkbox" id="tSea"></label>
+      <p id="envmsg"></p>
+    </section>
+
+    <div class="foot">
+      <p>船の位置は、船が自分で送るAIS信号を数分おきにまとめたものです。受信局が少ない海域では船が少なく表示されます。軍用船はAISを切っていることが多く、出るのは信号を送っている一部だけです。薄い船は、しばらく信号がありません。</p>
+      <p>データ: aisstream.io、Open-Meteo、OpenSeaMap。地図: Esri, GEBCO, NOAA, National Geographic, DeLorme, HERE, Geonames.org and other contributors。</p>
+    </div>
+  </div>
+</aside>
+
+<div id="searchbox">
+  <input id="q" type="search" placeholder="船名やMMSIで探す" autocomplete="off" aria-label="船を探す">
+  <div id="results" class="panel" hidden></div>
+</div>
+
+<div id="card" class="panel" hidden>
+  <div class="head">
+    <div>
+      <h3 class="name" id="cName">-</h3>
+      <div class="tag"><i id="cSw"></i><span id="cCls"></span></div>
+    </div>
+    <button class="x" id="cClose" type="button" aria-label="閉じる">×</button>
+  </div>
+  <dl id="cList"></dl>
+  <a id="cLink" target="_blank" rel="noopener">MarineTrafficで詳しく見る</a>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+(function () {
+  var STALE = 20 * 60 * 1000;
+
+  var CLS = {
+    cargo:     { n: "貨物船",             c: "#2e9e5b" },
+    tanker:    { n: "タンカー",           c: "#e0513c" },
+    passenger: { n: "旅客船・フェリー",   c: "#3b82f6" },
+    fishing:   { n: "漁船",               c: "#f0a030" },
+    tug:       { n: "タグ・作業船",       c: "#16b4c6" },
+    military:  { n: "軍用（信号を出す船）", c: "#8b4fd0" },
+    pleasure:  { n: "プレジャーボート",   c: "#d4529f" },
+    other:     { n: "その他・不明",       c: "#8d9ba5" }
+  };
+  var ORDER = ["cargo", "tanker", "passenger", "fishing", "tug", "military", "pleasure", "other"];
+  var REGIONS = [
+    { id: "japan",  n: "日本全体",       b: [24, 122, 46, 148] },
+    { id: "tokyo",  n: "東京湾",         b: [34.8, 139.5, 35.8, 140.3] },
+    { id: "ise",    n: "伊勢湾・名古屋", b: [34.3, 136.5, 35.3, 137.4] },
+    { id: "osaka",  n: "大阪湾・神戸",   b: [34.2, 134.8, 34.9, 135.6] },
+    { id: "seto",   n: "瀬戸内海",       b: [33.7, 131.5, 34.8, 134.6] },
+    { id: "kanmon", n: "関門海峡",       b: [33.5, 130.7, 34.2, 131.1] },
+    { id: "hakata", n: "博多湾",         b: [33.4, 130.1, 33.9, 130.6] },
+    { id: "tsugaru",n: "津軽海峡",       b: [41.0, 139.8, 42.0, 141.5] },
+    { id: "naha",   n: "沖縄本島",       b: [25.5, 126.8, 26.9, 128.4] }
+  ];
+  var STATUS = { 0: "航行中", 1: "錨泊中", 2: "操縦不能", 3: "操縦制限", 4: "喫水制限", 5: "係留中", 6: "座礁", 7: "漁労中", 8: "帆走中", 15: "不明" };
+  var FLAGS = { 431: "日本", 432: "日本", 412: "中国", 413: "中国", 414: "中国", 440: "韓国", 441: "韓国", 416: "台湾", 477: "香港", 351: "パナマ", 352: "パナマ", 353: "パナマ", 354: "パナマ", 355: "パナマ", 356: "パナマ", 357: "パナマ", 370: "パナマ", 371: "パナマ", 372: "パナマ", 373: "パナマ", 636: "リベリア", 637: "リベリア", 538: "マーシャル諸島", 563: "シンガポール", 564: "シンガポール", 565: "シンガポール", 566: "シンガポール", 366: "米国", 367: "米国", 368: "米国", 369: "米国", 273: "ロシア", 574: "ベトナム", 525: "インドネシア", 533: "マレーシア", 567: "タイ", 548: "フィリピン", 232: "英国", 235: "英国", 249: "マルタ", 256: "マルタ", 215: "マルタ", 209: "キプロス", 210: "キプロス", 212: "キプロス", 308: "バハマ", 309: "バハマ", 311: "バハマ" };
+
+  function classify(t) {
+    if (t === undefined || t === null) return "other";
+    if (t === 30) return "fishing";
+    if (t === 31 || t === 32 || t === 33 || t === 52) return "tug";
+    if (t === 35) return "military";
+    if (t === 36 || t === 37) return "pleasure";
+    if (t >= 60 && t <= 69) return "passenger";
+    if (t >= 70 && t <= 79) return "cargo";
+    if (t >= 80 && t <= 89) return "tanker";
+    return "other";
+  }
+  function flagOf(mmsi) { var mid = parseInt(String(mmsi).slice(0, 3), 10); return FLAGS[mid] || ("MID " + mid); }
+  function isJp(mmsi) { var m = String(mmsi).slice(0, 3); return m === "431" || m === "432"; }
+  function $(id) { return document.getElementById(id); }
+  function mk(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; }
+
+  /* ---------- map ---------- */
+  var map = L.map("map", { zoomControl: false, attributionControl: false, worldCopyJump: true }).setView([35.5, 137.5], 6);
+  L.control.zoom({ position: "bottomright" }).addTo(map);
+  L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/Ocean/World_Ocean_Base/MapServer/tile/{z}/{y}/{x}", { maxNativeZoom: 13, maxZoom: 16 }).addTo(map);
+  L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/Ocean/World_Ocean_Reference/MapServer/tile/{z}/{y}/{x}", { maxNativeZoom: 13, maxZoom: 16 }).addTo(map);
+  var seamark = L.tileLayer("https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png", { maxZoom: 18 });
+  map.createPane("env"); map.getPane("env").style.zIndex = 350; map.getPane("env").style.pointerEvents = "none";
+  var envLayer = L.layerGroup().addTo(map);
+  var trailLine = null;
+  var viewBounds = map.getBounds().pad(0.25);
+
+  /* ---------- state ---------- */
+  var ships = {};
+  var enabled = {};
+  ORDER.forEach(function (k) { enabled[k] = true; });
+  var selected = null;
+  var generated = 0;
+
+  /* ---------- ship icons ---------- */
+  function iconFor(cls, deg, moving, sel, stale) {
+    var c = CLS[cls].c, s = sel ? 26 : 18;
+    var body = moving
+      ? '<g transform="rotate(' + deg + ')"><path d="M0,-8.5 L6,7.5 L0,4.2 L-6,7.5 Z" fill="' + c + '" stroke="#fff" stroke-width="1.4" stroke-linejoin="round"/></g>'
+      : '<circle r="4.6" fill="' + c + '" stroke="#fff" stroke-width="1.4"/>';
+    var ring = sel ? '<circle r="11" fill="none" stroke="#fff" stroke-width="2"/><circle r="11" fill="none" stroke="' + c + '" stroke-width="1" stroke-dasharray="3 3"/>' : '';
+    var html = '<svg width="' + s + '" height="' + s + '" viewBox="-13 -13 26 26" style="opacity:' + (stale ? 0.45 : 1) + '">' + ring + body + '</svg>';
+    return L.divIcon({ className: "ship", html: html, iconSize: [s, s], iconAnchor: [s / 2, s / 2] });
+  }
+  function headingOf(s) {
+    if (s.hdg !== undefined && s.hdg < 360) return s.hdg;
+    if (s.cog !== undefined && s.cog < 360) return s.cog;
+    return 0;
+  }
+  function movingOf(s) { return s.sog !== undefined && s.sog >= 0.5 && s.sog < 102; }
+
+  // Only ships inside the visible map (plus a margin) get a marker, so thousands of ships stay fast.
+  function place(mmsi) {
+    var s = ships[mmsi];
+    if (!s || s.lat === undefined) return;
+    var cls = classify(s.type);
+    var sel = selected === mmsi;
+    var show = enabled[cls] && (sel || viewBounds.contains([s.lat, s.lon]));
+    if (!show) {
+      if (s.marker && map.hasLayer(s.marker)) map.removeLayer(s.marker);
+      return;
+    }
+    var deg = Math.round(headingOf(s) / 5) * 5;
+    var mv = movingOf(s);
+    var stale = Date.now() - s.t > STALE;
+    var key = cls + "|" + deg + "|" + mv + "|" + sel + "|" + stale;
+    if (!s.marker) {
+      s.marker = L.marker([s.lat, s.lon], { icon: iconFor(cls, deg, mv, sel, stale), keyboard: false });
+      s.marker.on("click", function () { pick(mmsi, false); });
+      s.key = key;
+    } else {
+      s.marker.setLatLng([s.lat, s.lon]);
+      if (s.key !== key) { s.marker.setIcon(iconFor(cls, deg, mv, sel, stale)); s.key = key; }
+    }
+    s.marker.setZIndexOffset(sel ? 1000 : 0);
+    if (!map.hasLayer(s.marker)) s.marker.addTo(map);
+  }
+  function placeAll() { Object.keys(ships).forEach(place); }
+
+  /* ---------- stats ---------- */
+  var statRows = {};
+  ORDER.forEach(function (k) {
+    var b = mk("button", "stat"); b.type = "button"; b.setAttribute("aria-pressed", "true");
+    var sw = mk("span", "sw"); sw.style.background = CLS[k].c;
+    var nm = mk("span", "", CLS[k].n);
+    var num = mk("span", "num", "0");
+    var bar = mk("div", "bar"), fill = mk("i"); fill.style.background = CLS[k].c; bar.appendChild(fill);
+    b.appendChild(sw); b.appendChild(nm); b.appendChild(num); b.appendChild(bar);
+    b.addEventListener("click", function () {
+      enabled[k] = !enabled[k];
+      b.setAttribute("aria-pressed", String(enabled[k]));
+      placeAll();
+    });
+    $("stats").appendChild(b);
+    statRows[k] = { num: num, fill: fill };
+  });
+
+  var totalShips = 0;
+  function renderStats() {
+    var counts = {}, total = 0, moving = 0, jp = 0, max = 1, now = Date.now();
+    ORDER.forEach(function (k) { counts[k] = 0; });
+    Object.keys(ships).forEach(function (m) {
+      var s = ships[m]; if (s.lat === undefined) return;
+      counts[classify(s.type)]++; total++;
+      if (movingOf(s) && now - s.t < STALE) moving++;
+      if (isJp(m)) jp++;
+    });
+    ORDER.forEach(function (k) { if (counts[k] > max) max = counts[k]; });
+    ORDER.forEach(function (k) {
+      statRows[k].num.textContent = counts[k];
+      statRows[k].fill.style.width = (counts[k] / max * 100) + "%";
+    });
+    $("nTotal").textContent = total; $("nMoving").textContent = moving; $("nJp").textContent = jp;
+    totalShips = total;
+  }
+
+  /* ---------- status line ---------- */
+  function setConn(state, text) {
+    $("dot").className = "dot" + (state === "ok" ? " ok" : state === "ng" ? " ng" : "");
+    $("conn").textContent = text;
+  }
+  function updateStatus() {
+    if (!generated) return;
+    var min = Math.max(0, Math.round((Date.now() - generated) / 60000));
+    var t = new Date(generated).toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" });
+    var txt = "更新 " + t + "（" + (min < 1 ? "いま" : min + "分前") + "）　" + totalShips + " 隻";
+    setConn(min <= 15 ? "ok" : "", min <= 15 ? txt : txt + "　更新が遅れています");
+  }
+
+  /* ---------- load the snapshot ---------- */
+  function apply(d) {
+    var seen = {};
+    d.ships.forEach(function (r) {
+      var m = String(r[0]); seen[m] = 1;
+      var s = ships[m] || (ships[m] = { trail: [] });
+      var moved = s.lat !== r[1] || s.lon !== r[2];
+      s.lat = r[1]; s.lon = r[2]; s.t = r[3];
+      s.name = r[4] || undefined;
+      s.type = r[5] >= 0 ? r[5] : undefined;
+      s.sog = r[6] >= 0 ? r[6] : undefined;
+      s.cog = r[7] >= 0 ? r[7] : undefined;
+      s.hdg = r[8] >= 0 ? r[8] : undefined;
+      s.dest = r[9] || undefined;
+      s.len = r[10] || undefined;
+      s.nav = r[11] >= 0 ? r[11] : undefined;
+      if (moved) { s.trail.push([r[1], r[2]]); if (s.trail.length > 60) s.trail.shift(); }
+    });
+    Object.keys(ships).forEach(function (m) {
+      if (!seen[m]) {
+        if (ships[m].marker) map.removeLayer(ships[m].marker);
+        if (selected === m) closeCard();
+        delete ships[m];
+      }
+    });
+    generated = d.generated;
+    renderStats();
+    placeAll();
+    if (selected) renderCard();
+    updateStatus();
+  }
+  function load() {
+    fetch("data/snapshot.json?t=" + Date.now(), { cache: "no-store" })
+      .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
+      .then(apply)
+      .catch(function () { if (!generated) setConn("ng", "船のデータを読み込めません。少し待ってから開き直してください"); });
+  }
+
+  /* ---------- regions ---------- */
+  var regionBtns = {};
+  REGIONS.forEach(function (r) {
+    var b = mk("button", "region", r.n); b.type = "button";
+    b.addEventListener("click", function () { setRegion(r); });
+    $("regions").appendChild(b); regionBtns[r.id] = b;
+  });
+  function setRegion(r) {
+    REGIONS.forEach(function (x) { regionBtns[x.id].setAttribute("aria-pressed", String(x.id === r.id)); });
+    map.fitBounds([[r.b[0], r.b[1]], [r.b[2], r.b[3]]]);
+    try { history.replaceState(null, "", "#" + r.id); } catch (e) {}
+    document.body.classList.remove("open");
+  }
+
+  /* ---------- ship card ---------- */
+  function ago(t) {
+    var sec = Math.max(0, Math.round((Date.now() - t) / 1000));
+    if (sec < 90) return sec + " 秒前";
+    if (sec < 5400) return Math.round(sec / 60) + " 分前";
+    return Math.round(sec / 3600) + " 時間前";
+  }
+  function renderCard() {
+    var s = ships[selected];
+    if (!s) { closeCard(); return; }
+    var cls = classify(s.type);
+    $("cName").textContent = s.name || "名称不明";
+    $("cSw").style.background = CLS[cls].c;
+    $("cCls").textContent = CLS[cls].n;
+    var rows = [
+      ["MMSI", selected],
+      ["船籍", flagOf(selected)],
+      ["状態", s.nav !== undefined && STATUS[s.nav] ? STATUS[s.nav] : (movingOf(s) ? "航行中" : "停止中")],
+      ["速力", s.sog !== undefined && s.sog < 102 ? s.sog.toFixed(1) + " ノット" : "-"],
+      ["針路", s.cog !== undefined && s.cog < 360 ? Math.round(s.cog) + "°" : "-"],
+      ["行き先", s.dest || "-"],
+      ["全長", s.len ? s.len + " m" : "-"],
+      ["最終受信", ago(s.t)]
+    ];
+    var dl = $("cList"); dl.textContent = "";
+    rows.forEach(function (r) { dl.appendChild(mk("dt", "", r[0])); dl.appendChild(mk("dd", "", String(r[1]))); });
+    $("cLink").href = "https://www.marinetraffic.com/en/ais/details/ships/mmsi:" + selected;
+    if (trailLine) { map.removeLayer(trailLine); trailLine = null; }
+    if (s.trail.length > 1) trailLine = L.polyline(s.trail, { color: CLS[cls].c, weight: 3, opacity: 0.85, dashArray: "2 6", lineCap: "round", interactive: false }).addTo(map);
+  }
+  function pick(mmsi, fly) {
+    var old = selected;
+    selected = mmsi;
+    if (old && ships[old]) place(old);
+    place(mmsi);
+    $("card").hidden = false;
+    renderCard();
+    if (fly && ships[mmsi].lat !== undefined) map.flyTo([ships[mmsi].lat, ships[mmsi].lon], Math.max(map.getZoom(), 12), { duration: 0.8 });
+  }
+  function closeCard() {
+    var old = selected;
+    selected = null;
+    $("card").hidden = true;
+    if (trailLine) { map.removeLayer(trailLine); trailLine = null; }
+    if (old && ships[old]) place(old);
+  }
+  $("cClose").addEventListener("click", closeCard);
+  map.on("click", closeCard);
+
+  /* ---------- search ---------- */
+  var q = $("q"), results = $("results");
+  function runSearch() {
+    var t = q.value.trim().toLowerCase();
+    results.textContent = "";
+    if (!t) { results.hidden = true; return; }
+    var hits = Object.keys(ships).filter(function (m) {
+      var s = ships[m]; if (s.lat === undefined) return false;
+      return m.indexOf(t) === 0 || (s.name && s.name.toLowerCase().indexOf(t) !== -1);
+    }).sort(function (a, b) { return (ships[a].name || "~").localeCompare(ships[b].name || "~"); }).slice(0, 8);
+    results.hidden = false;
+    if (!hits.length) { results.appendChild(mk("div", "empty", "見つかりません。受信できている船だけが対象です。")); return; }
+    hits.forEach(function (m) {
+      var s = ships[m], b = mk("button"); b.type = "button";
+      var sw = mk("span", "sw"); sw.style.background = CLS[classify(s.type)].c;
+      b.appendChild(sw); b.appendChild(mk("span", "nm", s.name || "名称不明")); b.appendChild(mk("span", "mm", m));
+      b.addEventListener("click", function () { results.hidden = true; q.value = ""; pick(m, true); });
+      results.appendChild(b);
+    });
+  }
+  q.addEventListener("input", runSearch);
+
+  /* ---------- wind and current ---------- */
+  $("tSea").addEventListener("change", function () { if (this.checked) seamark.addTo(map); else map.removeLayer(seamark); });
+  function envMsg(t) { $("envmsg").textContent = t; }
+  function arrow(lat, lon, deg, size, color, label) {
+    var h = '<div style="display:flex;flex-direction:column;align-items:center;width:' + (size + 24) + 'px;margin-left:-12px">' +
+      '<svg width="' + size + '" height="' + size + '" viewBox="-10 -10 20 20" style="transform:rotate(' + deg + 'deg)"><path d="M0,-9 L5,2 L1.5,0.5 L1.5,9 L-1.5,9 L-1.5,0.5 L-5,2 Z" fill="' + color + '" stroke="#ffffff" stroke-width="1"/></svg>' +
+      '<span style="font:700 10px/1 sans-serif;color:' + color + ';text-shadow:0 0 3px #fff,0 0 3px #fff,0 0 3px #fff">' + label + '</span></div>';
+    return L.marker([lat, lon], { pane: "env", interactive: false, keyboard: false,
+      icon: L.divIcon({ className: "", html: h, iconSize: [size + 12, size + 12], iconAnchor: [(size + 12) / 2 - 12, size / 2] }) });
+  }
+  function grid(off) {
+    var b = map.getBounds(), n = 6, la = [], lo = [];
+    for (var i = 0; i < n; i++) for (var j = 0; j < n; j++) {
+      var y = b.getSouth() + (b.getNorth() - b.getSouth()) * (i + off) / n;
+      var x = b.getWest() + (b.getEast() - b.getWest()) * (j + off) / n;
+      x = ((x + 540) % 360) - 180;
+      la.push(y.toFixed(3)); lo.push(x.toFixed(3));
+    }
+    return { lat: la.join(","), lon: lo.join(",") };
+  }
+  function getJson(url) {
+    return fetch(url).then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
+      .then(function (d) { return Array.isArray(d) ? d : [d]; });
+  }
+  var envTimer = null, envReq = 0;
+  function refreshEnv() {
+    var ww = $("tWind").checked, wc = $("tCur").checked, id = ++envReq;
+    if (!ww && !wc) { envLayer.clearLayers(); envMsg(""); return; }
+    envMsg("風・潮流を取得中…");
+    var jobs = [];
+    if (ww) { var g1 = grid(0.75); jobs.push(getJson("https://api.open-meteo.com/v1/forecast?latitude=" + g1.lat + "&longitude=" + g1.lon + "&current=wind_speed_10m,wind_direction_10m&wind_speed_unit=kn").then(function (a) { return { k: "w", a: a }; })); }
+    if (wc) { var g2 = grid(0.25); jobs.push(getJson("https://marine-api.open-meteo.com/v1/marine?latitude=" + g2.lat + "&longitude=" + g2.lon + "&current=ocean_current_velocity,ocean_current_direction").then(function (a) { return { k: "c", a: a }; })); }
+    Promise.all(jobs).then(function (res) {
+      if (id !== envReq) return;
+      envLayer.clearLayers();
+      var nw = 0, nc = 0;
+      res.forEach(function (r) {
+        r.a.forEach(function (d) {
+          var c = d.current; if (!c) return;
+          if (r.k === "w") {
+            var sp = c.wind_speed_10m, dr = c.wind_direction_10m; if (sp == null || dr == null) return;
+            arrow(d.latitude, d.longitude, (dr + 180) % 360, 14 + Math.min(sp, 30) * 0.7, "#1d4ed8", sp.toFixed(0) + "kn").addTo(envLayer); nw++;
+          } else {
+            var v = c.ocean_current_velocity, cd = c.ocean_current_direction; if (v == null || cd == null) return;
+            var kn = v / 1.852;
+            arrow(d.latitude, d.longitude, cd, 12 + Math.min(kn, 4) * 6, "#0d8a4e", kn.toFixed(1) + "kn").addTo(envLayer); nc++;
+          }
+        });
+      });
+      envMsg("風 " + nw + " 点／潮流 " + nc + " 点。陸地と細い水路には出ません。");
+    }).catch(function () { if (id === envReq) envMsg("風・潮流を取得できませんでした"); });
+  }
+  map.on("moveend", function () {
+    viewBounds = map.getBounds().pad(0.25);
+    placeAll();
+    clearTimeout(envTimer); envTimer = setTimeout(refreshEnv, 700);
+  });
+  $("tWind").addEventListener("change", refreshEnv);
+  $("tCur").addEventListener("change", refreshEnv);
+  setInterval(refreshEnv, 10 * 60 * 1000);
+
+  $("menu").addEventListener("click", function () { document.body.classList.toggle("open"); });
+
+  /* ---------- start ---------- */
+  var h = (location.hash || "").replace("#", "");
+  setRegion(REGIONS.filter(function (r) { return r.id === h; })[0] || REGIONS[0]);
+  load();
+  setInterval(load, 60 * 1000);
+  setInterval(function () { updateStatus(); if (selected && ships[selected]) renderCard(); }, 30000);
+})();
+</script>
+</body>
+</html>
