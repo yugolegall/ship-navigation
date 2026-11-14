@@ -1,5 +1,5 @@
-// Listens to aisstream.io for a few minutes and merges what it hears
-// into site/data/snapshot.json (last known position of every ship).
+// Listens to aisstream.io for a long stretch and keeps OUT_FILE (snapshot.json)
+// up to date every few seconds. The workflow publishes that file once a minute.
 import WebSocket from "ws";
 import fs from "node:fs";
 import path from "node:path";
@@ -7,11 +7,10 @@ import path from "node:path";
 const KEY = process.env.AISSTREAM_API_KEY;
 if (!KEY) { console.error("AISSTREAM_API_KEY is not set"); process.exit(1); }
 
-const SITE = process.env.SITE_DIR || "site";
+const FILE = process.env.OUT_FILE || "data/snapshot.json";
 const DURATION = (Number(process.env.DURATION_SEC) || 230) * 1000;
 const MAX_AGE = 12 * 60 * 60 * 1000;          // forget ships not heard for 12 hours
 const BBOX = [[18, 120], [46, 150]];           // south-west, north-east (lat, lon): Japan and its seas
-const FILE = path.join(SITE, "data", "snapshot.json");
 
 const ships = new Map();
 
@@ -77,6 +76,28 @@ function handle(raw) {
   received++;
 }
 
+function writeSnapshot() {
+  const now = Date.now();
+  const rows = [];
+  for (const [mmsi, s] of ships) {
+    if (now - s.t > MAX_AGE) continue;
+    rows.push([
+      Number(mmsi), s.lat, s.lon, s.t, s.name || "",
+      s.type === undefined ? -1 : s.type,
+      s.sog === undefined ? -1 : s.sog,
+      s.cog === undefined ? -1 : s.cog,
+      s.hdg === undefined ? -1 : s.hdg,
+      s.dest || "", s.len || 0,
+      s.nav === undefined ? -1 : s.nav
+    ]);
+  }
+  fs.mkdirSync(path.dirname(FILE), { recursive: true });
+  const tmp = FILE + ".tmp";
+  fs.writeFileSync(tmp, JSON.stringify({ generated: now, ships: rows }));
+  fs.renameSync(tmp, FILE);
+  return rows.length;
+}
+
 function listen() {
   return new Promise((resolve) => {
     const ws = new WebSocket("wss://stream.aisstream.io/v0/stream");
@@ -97,6 +118,9 @@ function listen() {
   });
 }
 
+// save every 20 seconds while listening, so the publisher always has fresh data
+const saver = setInterval(() => { try { writeSnapshot(); } catch (e) { console.error("write failed:", e.message); } }, 20000);
+
 while (Date.now() - startedAt < DURATION - 2000 && !authError) {
   await listen();
   if (Date.now() - startedAt < DURATION - 2000 && !authError) {
@@ -104,25 +128,10 @@ while (Date.now() - startedAt < DURATION - 2000 && !authError) {
     await new Promise((r) => setTimeout(r, 3000));
   }
 }
+clearInterval(saver);
 
-// ---- write the snapshot ----
-const now = Date.now();
-const rows = [];
-for (const [mmsi, s] of ships) {
-  if (now - s.t > MAX_AGE) continue;
-  rows.push([
-    Number(mmsi), s.lat, s.lon, s.t, s.name || "",
-    s.type === undefined ? -1 : s.type,
-    s.sog === undefined ? -1 : s.sog,
-    s.cog === undefined ? -1 : s.cog,
-    s.hdg === undefined ? -1 : s.hdg,
-    s.dest || "", s.len || 0,
-    s.nav === undefined ? -1 : s.nav
-  ]);
-}
-fs.mkdirSync(path.dirname(FILE), { recursive: true });
-fs.writeFileSync(FILE, JSON.stringify({ generated: now, ships: rows }));
-console.log("heard", received, "messages; wrote", rows.length, "ships");
+const n = writeSnapshot();
+console.log("heard", received, "messages; wrote", n, "ships");
 
 if (authError && received === 0) {
   console.error("aisstream error:", authError);
